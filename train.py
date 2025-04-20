@@ -109,7 +109,7 @@ def prepare_dataloaders(path, batch_size):
     
 	# Better cross-platform solution
     train_csv = pd.read_csv(os.path.join(path, "train.csv"))
-    valid_csv = pd.read_csv(f"{path}\\val.csv")
+    valid_csv = pd.read_csv(os.path.join(path, "val.csv")
 
 
     add_id_column(train_csv)
