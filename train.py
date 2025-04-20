@@ -225,7 +225,9 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\nUsing device: {device}")
 
-    data_path = os.path.join(os.getcwd(), "Task-1-Pawsitive", "data")
+    # data_path = os.path.join(os.getcwd(), "Task-1-Pawsitive", "data")
+    data_path = "/root/data1" # Change this to your data path
+
     embedding_size = 512
     batch_size = 48
     learning_rate = 1e-4
