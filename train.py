@@ -104,8 +104,13 @@ def add_id_column(dataframe):
     dataframe['id'] = [filename.split('/')[1] for filename in dataframe['filename']]
 
 def prepare_dataloaders(path, batch_size):
-    train_csv = pd.read_csv(f"{path}\\train.csv")
+    # train_csv = pd.read_csv(f"{path}\\train.csv")
+    # valid_csv = pd.read_csv(f"{path}\\val.csv")
+    
+	# Better cross-platform solution
+    train_csv = pd.read_csv(os.path.join(path, "train.csv"))
     valid_csv = pd.read_csv(f"{path}\\val.csv")
+
 
     add_id_column(train_csv)
     add_id_column(valid_csv)
