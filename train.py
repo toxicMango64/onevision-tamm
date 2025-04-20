@@ -227,6 +227,11 @@ def run_training_loop(model, loss_fn, miner, train_loader, val_loader, optimizer
 
 
 def main():
+
+    print(torch.__version__)               # confirm version
+    print(torch.version.cuda)              # confirm CUDA version
+    print(torch.cuda.is_available())       # check if GPU is usable
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\nUsing device: {device}")
 
