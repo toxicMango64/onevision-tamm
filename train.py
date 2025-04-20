@@ -109,7 +109,7 @@ def prepare_dataloaders(path, batch_size):
     
 	# Better cross-platform solution
     train_csv = pd.read_csv(os.path.join(path, "train.csv"))
-    valid_csv = pd.read_csv(os.path.join(path, "val.csv")
+    valid_csv = pd.read_csv(os.path.join(path, "val.csv"))
 
 
     add_id_column(train_csv)
@@ -231,7 +231,7 @@ def main():
     print(f"\nUsing device: {device}")
 
     # data_path = os.path.join(os.getcwd(), "Task-1-Pawsitive", "data")
-    data_path = "/root/data1" # Change this to your data path
+    data_path = "/root/tamm-data1" # Change this to your data path
 
     embedding_size = 512
     batch_size = 48
