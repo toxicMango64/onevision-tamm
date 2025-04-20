@@ -236,7 +236,7 @@ def main():
     print(f"\nUsing device: {device}")
 
     # data_path = os.path.join(os.getcwd(), "Task-1-Pawsitive", "data")
-    data_path = "/root/tamm-data1" # Change this to your data path
+    data_path = "/root/tammathon/data" # Change this to your data path
 
     embedding_size = 512
     batch_size = 48
