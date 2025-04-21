@@ -3,7 +3,7 @@ import math
 import faiss
 import torch
 import torchmetrics
-import pandas as pdq
+import pandas as pd
 import torch.nn as nn
 import torch.nn.functional as F
 
