@@ -3,7 +3,7 @@ import math
 import faiss
 import torch
 import torchmetrics
-import pandas as pd
+import pandas as pdq
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -184,17 +184,43 @@ def embed(data_loader, model, device):
     outputs['labels'] = torch.cat(outputs['labels'], dim=0)
     return outputs
 
-def get_knn_labels(ref_embeddings, query_embeddings, ref_labels, k=5):
-    ref_embeddings = ref_embeddings.numpy()
-    query_embeddings = query_embeddings.numpy()
-    ref_labels = ref_labels.numpy()
-
-    index = faiss.IndexFlatIP(ref_embeddings.shape[1])
-    index.add(ref_embeddings)
+def get_knn_labels(ref_embeddings, query_embeddings, ref_labels, k=5, use_float16=False):
+    ref_embeddings = ref_embeddings.cpu().numpy() if torch.is_tensor(ref_embeddings) else ref_embeddings
+    query_embeddings = query_embeddings.numpy() if torch.is_tensor(query_embeddings) else query_embeddings
+    ref_labels = ref_labels.numpy() if torch.is_tensor(ref_labels) else ref_labels
     
-    _, indices = index.search(query_embeddings, k)
-    knn_labels = torch.tensor(ref_labels[indices], dtype=torch.long)
-    return knn_labels
+    dtype = np.float16 if use_float16 and faiss.Float16Supported() else np.float32
+    ref_embeddings = ref_embeddings.astype(dtype)
+    query_embeddings query_embeddings.astype(dtype)
+
+    res = faiss.StandGpuResources()
+
+    gpu_config = faiss.GpuIndexFlatConfig()
+    gpu_config.device = 0
+    gpu_config.useFloat16 = use_float16 and faiss.Float16Supported()
+
+    dimension = ref_embeddings.shape[1]
+    cpu_index = faiss.IndexFlatIP(dimension)
+    gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index, gpu_config)
+    
+    try:
+        print("Starting Indexing...")
+        faiss.normalize_L2(ref_embeddings)
+        gpu_index.add(ref_embeddings)
+
+        faiss.normalize_L2(query_embeddings)
+        
+        D, I = gpu_index.searc(query_embeddings, k)
+
+        knn_labels = ref_labels[I]
+
+        return torch.from_numpy(knn_labels)
+
+    finally:
+        del gpu_index
+        res.noTempMemory()
+        if 'res' in locals():
+            del res
 
 def prepare_dataloaders(path, train_csv, valid_csv, batch_size, use_arc_margin=False):
     train_data = CatDataset(path, train_csv, transforms=get_train_transforms())
@@ -339,11 +365,6 @@ def main():
         arc_margin = None
         distance = distances.CosineSimilarity()
         loss_fn = losses.TripletMarginLoss(margin=0.2, distance=distance)
-
-    # optimizer = torch.optim.AdamW(
-    #     list(model.parameters()) + (list(arc_margin.parameters()) if arc_margin else []),
-    #     lr=1e-4, weight_decay=1e-5
-    # )
 
     optimizer = torch.optim.SGD(
         list(model.parameters()) + list(arc_margin.parameters()),
