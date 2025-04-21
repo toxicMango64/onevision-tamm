@@ -264,7 +264,7 @@ def run_training_loop(model, loss_fn, train_loader, val_loader, optimizer,
         # Validation
         if (epoch + 1) % validate_every == 0 or epoch == epochs - 1:
             model.eval()
-            with torch.no_grad():
+            with torch.inference_mode():
                 train_embeddings = embed(train_loader, model, device)
                 val_embeddings = embed(val_loader, model, device)
                 
