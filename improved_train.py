@@ -272,8 +272,7 @@ def run_training_loop(model, loss_fn, train_loader, val_loader, optimizer,
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    # data_path = os.path.join(os.getcwd(), "Task-1-Pawsitive", "data")
-    data_path = "/root/tammathon/data" # Change this to your data path
+    path = "/root/tammathon/data" # Change this to your data path
 
     # path = os.path.join("Task-1-Pawsitive", "data")
     # batch_size = 128
