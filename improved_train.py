@@ -168,7 +168,7 @@ def get_knn_labels(ref_embeddings, query_embeddings, ref_labels, k=5):
     knn_labels = torch.tensor(ref_labels[indices], dtype=torch.long)
     return knn_labels
 
-def prepare_dataloaders(path, batch_size):
+def prepare_dataloaders(path, batch_size, use_arc_margin=False):
     train_csv = pd.read_csv(os.path.join(path, "train.csv"))
     valid_csv = pd.read_csv(os.path.join(path, "val.csv"))
 
@@ -177,23 +177,31 @@ def prepare_dataloaders(path, batch_size):
     
     train_data = CatDataset(path, train_csv, transforms=get_train_transforms())
     valid_data = CatDataset(path, valid_csv, transforms=get_valid_transforms())
-    
-    sampler = samplers.MPerClassSampler(train_data.dataframe['id'].values, m=8, 
+
+    if use_arc_margin:
+        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
+                                  num_workers=min(4, os.cpu_count()-1), pin_memory=True, persistent_workers=True, prefetch_factor=2)
+    else:
+        sampler = samplers.MPerClassSampler(train_data.dataframe['id'].values, m=8, 
                                       batch_size=batch_size, length_before_new_iter=len(train_data))
-    train_loader = DataLoader(train_data, batch_size=batch_size, sampler=sampler, 
-                             num_workers=min(4, os.cpu_count()-1), pin_memory=True, persistent_workers=True)
+        train_loader = DataLoader(train_data, batch_size=batch_size, sampler=sampler, 
+                             num_workers=min(4, os.cpu_count()-1), pin_memory=True, persistent_workers=True, prefetch_factor=2)
     valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=False, 
                              num_workers=min(4, os.cpu_count()-1), pin_memory=True, persistent_workers=True)
 
     return train_loader, valid_loader, len(train_csv['label'].unique())
 
 def run_training_loop(model, loss_fn, train_loader, val_loader, optimizer, 
-                     device, epochs=10, k=5, save_path="best_model.pt", arc_margin=None):
+                     device, scheduler, epochs=15, k=3, save_path="best_model.pt", 
+                     arc_margin=None, validate_every=2):
+    
     metric = RetrievalAtK(k).to(device)
     best_score = 0.0
     history = {'loss': [], 'val_acc': []}
-
-    scaler = torch.amp.GradScaler(device)
+    
+    # Automatic Mixed Precision setup
+    use_amp = torch.cuda.get_device_capability()[0] >= 7
+    scaler = torch.amp.GradScaler(enabled=use_amp)
 
     for epoch in range(epochs):
         model.train()
@@ -201,83 +209,123 @@ def run_training_loop(model, loss_fn, train_loader, val_loader, optimizer,
             arc_margin.train()
         
         epoch_loss = 0
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}", leave=True)
+        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
         
         for x, y in progress_bar:
             x, y = x.to(device), y.to(device)
             optimizer.zero_grad()
             
-            with torch.amp.autocast(device_type=device):
+            with torch.amp.autocast(device_type=device, enabled=use_amp):
                 embeddings = model(x)
-                if arc_margin:
-                    logits = arc_margin(embeddings, y)
-                    loss = loss_fn(logits, y)
-                else:
-                    loss = loss_fn(embeddings, y)
+                logits = arc_margin(embeddings, y)
+                loss = loss_fn(logits, y)
             
-            loss.backward()
-            optimizer.step()
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+            scheduler.step()
             
             epoch_loss += loss.item()
-            progress_bar.set_postfix({'loss': f"{loss.item():.4f}"})
+            progress_bar.set_postfix({
+                'loss': f"{loss.item():.4f}",
+                'lr': f"{scheduler.get_last_lr()[0]:.2e}"
+            })
 
         avg_loss = epoch_loss / len(train_loader)
         history['loss'].append(avg_loss)
         
         # Validation
-        train_embeddings = embed(train_loader, model, device)
-        val_embeddings = embed(val_loader, model, device)
-        
-        knn_labels = get_knn_labels(
-            train_embeddings['embeddings'],
-            val_embeddings['embeddings'],
-            train_embeddings['labels'],
-            k=k
-        )
-        
-        metric.reset()
-        metric.update(knn_labels, val_embeddings['labels'])
-        retrieval_score = metric.compute().item()
-        history['val_acc'].append(retrieval_score)
-        
-        print(f"Epoch {epoch+1}: Loss={avg_loss:.4f}, Retrieval@{k}={retrieval_score*100:.2f}%")
-        
-        if retrieval_score > best_score:
-            best_score = retrieval_score
-            torch.save(model.state_dict(), save_path)
-            print(f"Saved best model with Retrieval@{k}={retrieval_score*100:.2f}%")
+        if (epoch + 1) % validate_every == 0 or epoch == epochs - 1:
+            model.eval()
+            with torch.no_grad():
+                train_embeddings = embed(train_loader, model, device)
+                val_embeddings = embed(val_loader, model, device)
+                
+                knn_labels = get_knn_labels(
+                    train_embeddings['embeddings'],
+                    val_embeddings['embeddings'],
+                    train_embeddings['labels'],
+                    k=k
+                )
+                
+                metric.reset()
+                metric.update(knn_labels, val_embeddings['labels'])
+                retrieval_score = metric.compute().item()
+                history['val_acc'].append(retrieval_score)
+                
+                print(f"Epoch {epoch+1}: Loss={avg_loss:.4f}, Retrieval@{k}={retrieval_score*100:.2f}%")
+                
+                if retrieval_score > best_score:
+                    best_score = retrieval_score
+                    torch.save({
+                        'model': model.state_dict(),
+                        'arc_margin': arc_margin.state_dict(),
+                        'optimizer': optimizer.state_dict(),
+                        'epoch': epoch
+                    }, save_path)
+        else:
+            history['val_acc'].append(None)
+            print(f"Epoch {epoch+1}: Loss={avg_loss:.4f}")
 
     return history
 
 def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    
-    path = os.path.join("/", "root", "tammathon", "data") # Change this to your data path
-    # path = os.path.join("Task-1-Pawsitive", "data")
+    path = os.path.join("Task-1-Pawsitive", "data")
+    # batch_size = 128
+    # embedding_size = 512
+    # epochs = 25
+    # k = 3
+    # use_arc_margin = True
 
-    batch_size = 64
-    embedding_size = 512
-    epochs = 15
-    k = 3
-    use_arc_margin = True
+    config = {
+        'batch_size': 128,
+        'embedding_size': 512,
+        'epochs': 30,
+        'lr': 0.1,
+        'margin': 0.3,
+        'scale': 30.0,
+        'weight_decay': 1e-4,
+        'validate_every': 2,
+        'use_arc_margin': True,
+        'k': 3,
+    }
 
     os.makedirs("output", exist_ok=True)
 
-    train_loader, val_loader, num_classes = prepare_dataloaders(path, batch_size)
-    model = ResNetFE(embedding_size, weights=ResNet50_Weights.IMAGENET1K_V2).to(device)
+    train_loader, val_loader, num_classes = prepare_dataloaders(path, config['batch_size'], config['use_arc_margin'])
+
+    print("Unique labels:", torch.unique(torch.tensor(train_loader.dataset.dataframe['label'])))
+
+    model = ResNetFE(config['embedding_size'], weights=ResNet50_Weights.IMAGENET1K_V2).to(device)
 
     # ArcMargin + CrossEntropy Loss or Triplet Loss
-    if use_arc_margin:
-        arc_margin = ArcMarginProduct(embedding_size, num_classes, margin=0.2).to(device)
+    if config['use_arc_margin']:
+        arc_margin = ArcMarginProduct(config['embedding_size'], num_classes, margin=config['margin'], scale=config['scale']).to(device)
         loss_fn = nn.CrossEntropyLoss()
     else:
         arc_margin = None
         distance = distances.CosineSimilarity()
         loss_fn = losses.TripletMarginLoss(margin=0.2, distance=distance)
 
-    optimizer = torch.optim.AdamW(
-        list(model.parameters()) + (list(arc_margin.parameters()) if arc_margin else []),
-        lr=1e-4, weight_decay=1e-5
+    # optimizer = torch.optim.AdamW(
+    #     list(model.parameters()) + (list(arc_margin.parameters()) if arc_margin else []),
+    #     lr=1e-4, weight_decay=1e-5
+    # )
+
+    optimizer = torch.optim.SGD(
+        list(model.parameters()) + list(arc_margin.parameters()),
+        lr=config['lr'],  # Start higher
+        momentum=0.9,
+        weight_decay=1e-4, 
+        nesterov=True
+    )
+
+    scheduler = torch.optim.lr_scheduler.OneCycleLR(
+        optimizer,
+        max_lr=config['lr'],
+        steps_per_epoch=len(train_loader),
+        epochs=config['epochs']
     )
 
     history = run_training_loop(
@@ -287,17 +335,20 @@ def main():
         val_loader=val_loader,
         optimizer=optimizer,
         device=device,
-        epochs=epochs,
-        k=k,
+        scheduler=scheduler,
+        epochs=config['epochs'],
+        k=config['k'],
         arc_margin=arc_margin,
-        save_path=os.path.join("output", "best_model.pt")
+        save_path=os.path.join("output", "best_model.pt"),
+        validate_every=2
     )
 
     history_df = pd.DataFrame({
-        'epoch': range(1, epochs+1),
+        'epoch': range(1, config['epochs'] + 1),
         'loss': history['loss'],
-        f'retrieval@{k}': history['val_acc']
+        f'retrieval@{config['k']}': history['val_acc']
     })
+
     history_csv_path = os.path.join("output", "training_history.csv")
     history_df.to_csv(history_csv_path, index=False)
     print(f"\nTraining history saved to {history_csv_path}")
