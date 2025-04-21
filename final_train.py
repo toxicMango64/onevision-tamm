@@ -21,15 +21,15 @@ class CatDataset(Dataset):
         self.root_dir = root_dir
         self.transforms = transforms
         self.dataframe = dataframe
-        self.subset = dataframe['filename'][0].split('/')[0]
     
     def __len__(self):
         return len(self.dataframe)
 
     def __getitem__(self, idx):
         row = self.dataframe.iloc[idx]
-        img_path = os.path.join(self.root_dir, self.subset, row['filename'])
-        label = int(row["label"])
+        subset = row['filename'].split('/')[0]
+        img_path = os.path.join(self.root_dir, subset, row['filename'])
+        label = row['label']
         img = Image.open(img_path).convert("RGB")
         if self.transforms:
             img = self.transforms(img)
@@ -42,7 +42,7 @@ def redistribute_classes(train_csv, valid_csv, test_size=0.2, random_state=42):
     id_to_images = defaultdict(list)
     for i in tqdm(range(len(combined_csv)), desc="Creating ID to Image Mapping"):
         row = combined_csv.iloc[i]
-        filename, label, id = row
+        filename, label = row['filename'], row['label']
         id_to_images[label].append(filename)
 
     train_data, valid_data = [], []
@@ -50,14 +50,14 @@ def redistribute_classes(train_csv, valid_csv, test_size=0.2, random_state=42):
         if len(paths) < 2:
             train_data.extend((p, label) for p in paths)
             continue
-        train_imgs, val_imgs = train_test_split(paths, 
+        train_imgs, valid_imgs = train_test_split(paths, 
                                                 test_size=test_size,
                                                 random_state=random_state)
         train_data.extend((p, label) for p in train_imgs)
         valid_data.extend((p, label) for p in valid_imgs)
 
-    train_df = pd.DataFrame(train_data, columns=['filename', 'id'])
-    valid_df = pd.DataFrame(valid_data, columns['filename', 'id'])
+    train_df = pd.DataFrame(train_data, columns=['filename', 'label'])
+    valid_df = pd.DataFrame(valid_data, columns=['filename', 'label'])
     
     return train_df, valid_df
 
@@ -196,10 +196,7 @@ def get_knn_labels(ref_embeddings, query_embeddings, ref_labels, k=5):
     knn_labels = torch.tensor(ref_labels[indices], dtype=torch.long)
     return knn_labels
 
-def prepare_dataloaders(path, train_csv, valid_csv, batch_size, use_arc_margin=False)
-    train_csv['id'] = train_csv['filename'].apply(lambda x: x.split('/')[1])
-    valid_csv['id'] = valid_csv['filename'].apply(lambda x: x.split('/')[1])
-    
+def prepare_dataloaders(path, train_csv, valid_csv, batch_size, use_arc_margin=False):
     train_data = CatDataset(path, train_csv, transforms=get_train_transforms())
     valid_data = CatDataset(path, valid_csv, transforms=get_valid_transforms())
 
@@ -207,7 +204,7 @@ def prepare_dataloaders(path, train_csv, valid_csv, batch_size, use_arc_margin=F
         train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
                                   num_workers=min(4, os.cpu_count()-1), pin_memory=True, persistent_workers=True, prefetch_factor=2)
     else:
-        sampler = samplers.MPerClassSampler(train_data.dataframe['id'].values, m=8, 
+        sampler = samplers.MPerClassSampler(train_data.dataframe['label'].values, m=8, 
                                       batch_size=batch_size, length_before_new_iter=len(train_data))
         train_loader = DataLoader(train_data, batch_size=batch_size, sampler=sampler, 
                              num_workers=min(4, os.cpu_count()-1), pin_memory=True, persistent_workers=True, prefetch_factor=2)
@@ -381,7 +378,7 @@ def main():
     history_df = pd.DataFrame({
         'epoch': range(1, config['epochs'] + 1),
         'loss': history['loss'],
-        f'retrieval@{config['k']}': history['val_acc']
+        f"retrieval@{config['k']}": history['val_acc']
     })
 
     history_csv_path = os.path.join("new_output", "training_history.csv")
