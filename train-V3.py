@@ -191,7 +191,7 @@ def get_knn_labels(ref_embeddings, query_embeddings, ref_labels, k=5, use_float1
     
     dtype = np.float16 if use_float16 and faiss.Float16Supported() else np.float32
     ref_embeddings = ref_embeddings.astype(dtype)
-    query_embeddings query_embeddings.astype(dtype)
+    query_embeddings = query_embeddings.astype(dtype)
 
     res = faiss.StandGpuResources()
 
