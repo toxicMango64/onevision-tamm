@@ -340,7 +340,7 @@ def main():
         'margin': 0.3,
         'scale': 30.0,
         'weight_decay': 1e-4,
-        'validate_every': 2,
+        'validate_every': 1,
         'use_arc_margin': True,
         'k': 3,
     }
