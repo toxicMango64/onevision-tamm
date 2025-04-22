@@ -4,6 +4,7 @@ import faiss
 import torch
 import torchmetrics
 import pandas as pd
+import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -14,7 +15,7 @@ from sklearn.model_selection import train_test_split
 from torchvision.transforms import v2
 from torch.utils.data import Dataset, DataLoader
 from torchvision.models import resnet50, ResNet50_Weights
-from pytorch_metric_learning import miners, losses, samplers, distances
+from pytorch_metric_learning import losses, samplers, distances
 
 class CatDataset(Dataset):
     def __init__(self, root_dir, dataframe, transforms=None):
@@ -210,9 +211,9 @@ def get_knn_labels(ref_embeddings, query_embeddings, ref_labels, k=5, use_float1
 
         faiss.normalize_L2(query_embeddings)
         
-        D, I = gpu_index.searc(query_embeddings, k)
+        D, index = gpu_index.search(query_embeddings, k)
 
-        knn_labels = ref_labels[I]
+        knn_labels = ref_labels[index]
 
         return torch.from_numpy(knn_labels)
 
@@ -415,7 +416,9 @@ def main():
         'val_embeddings': final_val_embeddings,
         'model_state_dict': model.state_dict()
     }, os.path.join("new_output", "final_embeddings.pt"))
-    print(f"Embeddings and model saved to new_output/final_embeddings.pt")
+
+    # print(f"Embeddings and model saved to new_output/final_embeddings.pt")
+    print("Embeddings and model saved to new_output/final_embeddings.pt")
 
 if __name__ == "__main__":
     main()
