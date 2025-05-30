@@ -177,3 +177,6 @@ telegram.sh
 *_cache
 *.log
 *.ptchge.sh
+
+#project based configuration
+chge.sh
